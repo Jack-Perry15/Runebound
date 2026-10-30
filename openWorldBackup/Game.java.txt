@@ -1,0 +1,1274 @@
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import javax.imageio.ImageIO;
+import javax.swing.*;
+
+public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelListener, MouseListener, MouseMotionListener{
+
+
+	private BufferedImage back;
+
+	private static final int charSelectScreen = 0;
+	private static final int spellbookScreen = 1;
+	private static final int exploreScreen = 2;
+
+	private int currentScreen = charSelectScreen;
+
+	//ai written code to pull images from the sprite_grid
+	private BufferedImage spriteSheet;
+	private static final int frameSize = 64;
+	private static final int characterFrameSize = 128;
+	private static final int framesPerCharacter = 18;
+	private static final int spriteMargin = 4;
+	private static final int spritePadding = 4;
+
+	//the columns of the sprite grid
+	private static final int dirFront = 0;
+	private static final int dirRight = 1;
+	private static final int dirLeft = 2;
+	private static final int dirJumpFront = 3;
+	private static final int dirJumpRight = 4;
+	private static final int dirJumpLeft = 5;
+	private static final int dirFallFront = 6;
+	private static final int dirFallRight = 7;
+	private static final int dirFallLeft = 8;
+	private BufferedImage[][] frames;
+
+	private Character[] roster = new Character[] {
+		new Mossback(),
+		new Croakfang(),
+		new Glimmerswarm(),
+		new Cindertail()
+	};
+
+	private int selectedIndex = 0;
+
+	//spin animation
+	private static final int spinTime = 50;
+	private static final int frontPauseTime = 200;
+	private int spinCounter = 0;
+	private int spinDirection = dirFront;
+	private static final int spinStepTime = 40;
+	private int spinStepCounter = 0;
+	private int spinStep = 0;
+
+	//ai written code to pull images from the 4 spell grids
+	//aim directions match the order of the spell grids: down, up, left, right
+	private static final int aimDown = 0;
+	private static final int aimUp = 1;
+	private static final int aimLeft = 2;
+	private static final int aimRight = 3;
+	private BufferedImage[][][] spellFrames;
+
+	private SpellBook book = new SpellBook();
+
+	//rune pictures: [which rune][animation frame]
+	private BufferedImage[][] runeFrames;
+	private int runeFrame = 0;
+	private int runeFrameTimer = 0;
+
+	private int spellFrame = 0;
+	private int spellFrameTimer = 0;
+
+	private int spellbookScroll = 0;
+	private int spellbookMaxScroll = 0;
+	private boolean upHeld = false;
+	private boolean downHeld = false;
+
+	private static final int viewHeight = 288;
+	private static final int hitWidth = 17;
+	private static final int hitHeight = 40;
+	private static final double jumpSpeed = 2.5;
+	private static final double maxFallSpeed = 3.0;
+	private static final int fadeTime = 45;
+	private static final int titleTime = 600;
+	private int animStep = 0;
+	private int animTimer = 0;
+
+	private Background biome;
+	private Background swampBiome;
+	private Background emberBiome;
+	private Background cavernsBiome;
+	private Background canopyBiome;
+	private boolean mapOpen = false;
+	private boolean worldsLoaded = false;
+	private int mapBlinkTimer = 0;
+	private boolean mapBlinkOn = true;
+	private Room currentRoom;
+	private int explorerRow = 0;
+	private double walkSpeed = 1.0;
+	private double playerX = 0;
+	private double playerY = 0;
+	private double velocityY = 0;
+	private boolean onGround = false;
+	private int facing = dirFront;
+	private double moveAmount = 0;
+	private double cameraX = 0;
+	private double cameraY = 0;
+	private boolean leftHeld = false;
+	private boolean rightHeld = false;
+	private boolean jumpHeld = false;
+	private boolean jumpQueued = false;
+	private boolean dropHeld = false;
+	private int downTapTimer = 0;
+	private int dropTimer = 0;
+	private int fadeTimer = 0;
+	private int titleTimer = 0;
+
+
+	public Game() {
+
+		loadSprites();
+		loadSpellSprites();
+		loadRuneSprites();
+
+		this.addKeyListener(this);
+		this.addMouseListener(this);
+		this.addMouseMotionListener(this);
+		this.addMouseWheelListener(this);
+		new Thread(this).start();
+
+	}
+
+	private void loadSprites() {
+		try {
+			spriteSheet = ImageIO.read(new File("spriteGrid.png"));
+		} catch (IOException e) {
+			System.out.println("Could not load spriteGrid.png: " + e);
+			spriteSheet = null;
+		}
+
+		frames = new BufferedImage[roster.length][framesPerCharacter];
+		if (spriteSheet == null) {
+			return;
+		}
+
+		for (int row = 0; row < roster.length; row++) {
+			for (int col = 0; col < framesPerCharacter; col++) {
+				int sx = spriteMargin + col * (characterFrameSize + spritePadding);
+				int sy = spriteMargin + row * (characterFrameSize + spritePadding);
+				frames[row][col] = spriteSheet.getSubimage(sx, sy, characterFrameSize, characterFrameSize);
+			}
+		}
+	}
+
+	private void loadSpellSprites() {
+		spellFrames = new BufferedImage[4][book.getSpellCount()][3];
+		loadSpellGrid(aimDown, "spellGridDown.png");
+		loadSpellGrid(aimUp, "spellGridUp.png");
+		loadSpellGrid(aimLeft, "spellGridLeft.png");
+		loadSpellGrid(aimRight, "spellGridRight.png");
+	}
+
+	private void loadSpellGrid(int direction, String fileName) {
+		BufferedImage sheet;
+		try {
+			sheet = ImageIO.read(new File(fileName));
+		} catch (IOException e) {
+			System.out.println("Could not load " + fileName + ": " + e);
+			return;
+		}
+
+		for (int row = 0; row < book.getSpellCount(); row++) {
+			for (int col = 0; col < 3; col++) {
+				int sx = spriteMargin + col * (frameSize + spritePadding);
+				int sy = spriteMargin + row * (frameSize + spritePadding);
+				spellFrames[direction][row][col] = sheet.getSubimage(sx, sy, frameSize, frameSize);
+			}
+		}
+	}
+
+	//runeGrid.png has one row per rune and 4 columns of it floating and glowing
+	private void loadRuneSprites() {
+		runeFrames = new BufferedImage[12][4];
+		BufferedImage sheet;
+		try {
+			sheet = ImageIO.read(new File("runeGrid.png"));
+		} catch (IOException e) {
+			System.out.println("Could not load runeGrid.png: " + e);
+			return;
+		}
+
+		for (int row = 0; row < 12; row++) {
+			for (int col = 0; col < 4; col++) {
+				int sx = spriteMargin + col * (frameSize + spritePadding);
+				int sy = spriteMargin + row * (frameSize + spritePadding);
+				runeFrames[row][col] = sheet.getSubimage(sx, sy, frameSize, frameSize);
+			}
+		}
+	}
+
+	  public void run()
+	   {
+	   	try
+	   	{
+	   		repaint();
+	   		preloadWorlds();
+	   		while(true)
+	   		{
+	   		   Thread.currentThread().sleep(5);
+	   		   updateSpin();
+	   		   if (currentScreen == spellbookScreen) {
+	   			   updateSpellbook();
+	   		   }
+	   		   if (currentScreen == exploreScreen) {
+	   			   updateExploring();
+	   		   }
+	            repaint();
+	         }
+	      }catch(Exception e)
+	      {
+	      }
+	  	}
+
+
+	  public  void paint(Graphics g){
+
+		  Graphics2D  twoDgraph= (Graphics2D)g;
+
+		if(back==null)
+		   back = (BufferedImage)(createImage(getWidth(),getHeight()));
+
+
+		Graphics g2d = back.createGraphics();
+
+
+		g2d.clearRect(0,0,getSize().width, getSize().height);
+		//start coding here
+
+		switch (currentScreen) {
+			case charSelectScreen:
+				drawCharacterSelect((Graphics2D) g2d);
+				break;
+			case spellbookScreen:
+				drawSpellbook((Graphics2D) g2d);
+				break;
+			case exploreScreen:
+				drawExploring((Graphics2D) g2d);
+				break;
+		}
+
+
+
+		//do not delte this line of code, it draws everything above
+		twoDgraph.drawImage(back, null, 0, 0);
+
+
+
+
+
+	}
+
+	private void drawCharacterSelect(Graphics2D g2d) {
+		int w = getWidth();
+		int h = getHeight();
+
+		g2d.setColor(new Color(238, 233, 214));
+		g2d.fillRect(0, 0, w, h);
+
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.setFont(new Font("Arial", Font.BOLD, h / 20));
+		drawCentered(g2d, "SELECT YOUR CHARACTER", w / 2, h / 8);
+
+		int statBoxWidth = w / 4;
+		int statBoxMargin = w / 32;
+		int statBoxHeight = getStatLineHeight() * 11;
+
+		int characterAreaWidth = w - statBoxWidth - statBoxMargin * 2;
+		int slotSpacing = characterAreaWidth / (roster.length + 1);
+		int centerY = h / 2;
+
+		int maxSpriteSize = h / 3;
+		int spriteSize = Math.min(maxSpriteSize, (int) (slotSpacing * 0.85));
+
+		//keeps the pixel art sharp instead of blurry when it gets scaled up
+		g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+
+		for (int i = 0; i < roster.length; i++) {
+			boolean isSelected = (i == selectedIndex);
+
+			int drawSize = spriteSize * 3 / 4;
+			int nameSize = h / 45;
+			int dir = dirFront;
+
+			if (isSelected) {
+				drawSize = spriteSize;
+				nameSize = h / 33;
+				dir = spinDirection;
+			}
+
+			int slotX = slotSpacing * (i + 1);
+			int drawX = slotX - drawSize / 2;
+			int drawY = centerY - drawSize / 2;
+
+			if (isSelected) {
+				g2d.setColor(new Color(222, 214, 188));
+				g2d.fillRect(drawX, drawY, drawSize, drawSize);
+			}
+
+			int step = 0;
+			if (isSelected) {
+				step = spinStep;
+			}
+			int bigSize = drawSize * 4 / 3;
+			g2d.drawImage(frames[i][dir * 2 + step], slotX - bigSize / 2, drawY + drawSize - bigSize, bigSize, bigSize, null);
+
+			g2d.setColor(new Color(30, 22, 15));
+			g2d.setFont(new Font("Arial", Font.BOLD, nameSize));
+			drawCentered(g2d, roster[i].getName(), slotX, drawY + drawSize + h / 12);
+		}
+
+		drawStatBox(g2d, roster[selectedIndex], w - statBoxWidth - statBoxMargin, centerY - statBoxHeight / 2, statBoxWidth, statBoxHeight);
+
+		g2d.setColor(new Color(90, 80, 65));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 45));
+		drawCentered(g2d, "Use ARROW KEYS or WASD to choose", w / 2, h - h / 12);
+		if (worldsLoaded) {
+			drawCentered(g2d, "Press B to open the spellbook          Press ENTER to explore", w / 2, h - h / 30);
+		} else {
+			drawCentered(g2d, "Press B to open the spellbook          Loading the open world...", w / 2, h - h / 30);
+		}
+	}
+
+	//one line of text in the stat box, used for the box height too
+	private int getStatLineHeight() {
+		return getHeight() / 26;
+	}
+
+	private void updateSpin() {
+		spinCounter++;
+
+		spinStepCounter++;
+		if (spinStepCounter >= spinStepTime) {
+			spinStepCounter = 0;
+			if (spinStep == 0) {
+				spinStep = 1;
+			} else {
+				spinStep = 0;
+			}
+		}
+
+		//idle, right, left, jump, fall, then a pause on idle before it starts over
+		if (spinCounter < spinTime) {
+			spinDirection = dirFront;
+		} else if (spinCounter < spinTime * 2) {
+			spinDirection = dirRight;
+		} else if (spinCounter < spinTime * 3) {
+			spinDirection = dirLeft;
+		} else if (spinCounter < spinTime * 4) {
+			spinDirection = dirJumpFront;
+		} else if (spinCounter < spinTime * 5) {
+			spinDirection = dirFallFront;
+		} else if (spinCounter < spinTime * 5 + frontPauseTime) {
+			spinDirection = dirFront;
+		} else {
+			spinCounter = 0;
+		}
+	}
+
+	private void drawStatBox(Graphics2D g2d, Character c, int x, int y, int boxWidth, int boxHeight) {
+		int lineHeight = getStatLineHeight();
+		int corner = lineHeight / 2;
+
+		g2d.setColor(new Color(250, 246, 235));
+		g2d.fillRoundRect(x, y, boxWidth, boxHeight, corner, corner);
+		g2d.setColor(Color.BLACK);
+		g2d.setStroke(new BasicStroke(getHeight() / 250 + 1));
+		g2d.drawRoundRect(x, y, boxWidth, boxHeight, corner, corner);
+
+		int textX = x + lineHeight;
+		int textY = y + lineHeight + lineHeight / 2;
+
+		g2d.setFont(new Font("Arial", Font.BOLD, lineHeight * 3 / 4));
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.drawString(c.getName(), textX, textY);
+		textY += lineHeight + lineHeight / 4;
+
+		g2d.setFont(new Font("Arial", Font.PLAIN, lineHeight * 3 / 5));
+		g2d.setColor(new Color(90, 80, 65));
+
+		g2d.drawString("HP: " + c.getHp(), textX, textY);
+		textY += lineHeight;
+		g2d.drawString("Stamina: " + c.getStamina(), textX, textY);
+		textY += lineHeight;
+		g2d.drawString("Mana: " + c.getMana(), textX, textY);
+		textY += lineHeight;
+		g2d.drawString("Speed: " + c.getSpeed(), textX, textY);
+		textY += lineHeight;
+		g2d.drawString("Defense: " + c.getDefense(), textX, textY);
+		textY += lineHeight;
+
+		textY += lineHeight / 4;
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.setFont(new Font("Arial", Font.BOLD, lineHeight * 3 / 5));
+		g2d.drawString("Element: " + c.getElement(), textX, textY);
+		textY += lineHeight;
+		g2d.drawString("Special Rune: " + c.getSpecialRune().getName(), textX, textY);
+	}
+
+	private void drawCentered(Graphics2D g2d, String text, int centerX, int y) {
+		FontMetrics fm = g2d.getFontMetrics();
+		int textWidth = fm.stringWidth(text);
+		g2d.drawString(text, centerX - textWidth / 2, y);
+	}
+
+	private void openSpellbook() {
+		currentScreen = spellbookScreen;
+		spellbookScroll = 0;
+		upHeld = false;
+		downHeld = false;
+	}
+
+	private void updateSpellbook() {
+		int scrollSpeed = getHeight() / 300 + 1;
+		if (upHeld) {
+			spellbookScroll = spellbookScroll - scrollSpeed;
+		}
+		if (downHeld) {
+			spellbookScroll = spellbookScroll + scrollSpeed;
+		}
+		if (spellbookScroll > spellbookMaxScroll) {
+			spellbookScroll = spellbookMaxScroll;
+		}
+		if (spellbookScroll < 0) {
+			spellbookScroll = 0;
+		}
+
+		runeFrameTimer++;
+		if (runeFrameTimer >= 25) {
+			runeFrameTimer = 0;
+			runeFrame++;
+			if (runeFrame >= 4) {
+				runeFrame = 0;
+			}
+		}
+
+		spellFrameTimer++;
+		if (spellFrameTimer >= 40) {
+			spellFrameTimer = 0;
+			spellFrame++;
+			if (spellFrame >= 3) {
+				spellFrame = 0;
+			}
+		}
+	}
+
+	private void drawSpellbook(Graphics2D g2d) {
+		int w = getWidth();
+		int h = getHeight();
+
+		g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+
+		g2d.setColor(new Color(238, 233, 214));
+		g2d.fillRect(0, 0, w, h);
+
+		int margin = w / 32;
+		int gap = h / 50;
+		int cardWidth = (w - margin * 2 - gap) / 2;
+		int rightX = margin + cardWidth + gap;
+		int runeCardHeight = h / 8;
+		int spellCardHeight = h / 6;
+		int headerHeight = h / 12;
+		int titleHeight = h / 7;
+		int footerHeight = h / 14;
+
+		int scroll = spellbookScroll;
+		int y = titleHeight + gap - scroll;
+
+		drawSectionHeader(g2d, "RUNES  (" + book.getRuneCount() + ")", margin, y + headerHeight * 2 / 3);
+		y = y + headerHeight;
+
+		for (int i = 0; i < book.getRuneCount(); i = i + 2) {
+			drawRuneCard(g2d, book.getRune(i), margin, y, cardWidth, runeCardHeight);
+			if (i + 1 < book.getRuneCount()) {
+				drawRuneCard(g2d, book.getRune(i + 1), rightX, y, cardWidth, runeCardHeight);
+			}
+			y = y + runeCardHeight + gap;
+		}
+
+		y = y + gap;
+		drawSectionHeader(g2d, "SPELLS  (" + book.getSpellCount() + ")", margin, y + headerHeight * 2 / 3);
+		y = y + headerHeight;
+
+		for (int i = 0; i < book.getSpellCount(); i = i + 2) {
+			drawSpellCard(g2d, book.getSpell(i), i, margin, y, cardWidth, spellCardHeight);
+			if (i + 1 < book.getSpellCount()) {
+				drawSpellCard(g2d, book.getSpell(i + 1), i + 1, rightX, y, cardWidth, spellCardHeight);
+			}
+			y = y + spellCardHeight + gap;
+		}
+
+		spellbookMaxScroll = y + scroll - (h - footerHeight);
+
+		g2d.setColor(new Color(238, 233, 214));
+		g2d.fillRect(0, 0, w, titleHeight);
+		g2d.fillRect(0, h - footerHeight, w, footerHeight);
+
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.fillRect(margin, titleHeight - 3, w - margin * 2, 3);
+		g2d.fillRect(margin, h - footerHeight, w - margin * 2, 3);
+		g2d.setFont(new Font("Arial", Font.BOLD, h / 20));
+		drawCentered(g2d, "SPELLBOOK", w / 2, h / 11);
+
+		g2d.setColor(new Color(90, 80, 65));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 45));
+		drawCentered(g2d, "SCROLL WHEEL, W / S or UP / DOWN to scroll          B to go back", w / 2, h - h / 45);
+	}
+
+	private void drawSectionHeader(Graphics2D g2d, String text, int x, int y) {
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.setFont(new Font("Arial", Font.BOLD, getHeight() / 28));
+		g2d.drawString(text, x, y);
+	}
+
+	private int drawCard(Graphics2D g2d, int x, int y, int cardWidth, int cardHeight) {
+		int h = getHeight();
+		int corner = h / 50;
+		int pad = cardHeight / 10;
+		int pictureSize = cardHeight - pad * 2;
+
+		g2d.setColor(new Color(250, 246, 235));
+		g2d.fillRoundRect(x, y, cardWidth, cardHeight, corner, corner);
+		g2d.setColor(Color.BLACK);
+		g2d.setStroke(new BasicStroke(h / 400 + 1));
+		g2d.drawRoundRect(x, y, cardWidth, cardHeight, corner, corner);
+
+		g2d.setColor(new Color(28, 38, 40));
+		g2d.fillRoundRect(x + pad, y + pad, pictureSize, pictureSize, corner, corner);
+		return pictureSize;
+	}
+
+	private void drawRuneCard(Graphics2D g2d, Rune r, int x, int y, int cardWidth, int cardHeight) {
+		int h = getHeight();
+		int pad = cardHeight / 10;
+		int pictureSize = drawCard(g2d, x, y, cardWidth, cardHeight);
+
+		g2d.drawImage(runeFrames[r.getSpriteRow()][runeFrame], x + pad, y + pad, pictureSize, pictureSize, null);
+
+		int textX = x + pad * 2 + pictureSize;
+		int lineHeight = cardHeight / 4;
+		int textY = y + pad + lineHeight * 3 / 4;
+
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.setFont(new Font("Arial", Font.BOLD, h / 38));
+		g2d.drawString(r.getName(), textX, textY);
+		textY = textY + lineHeight;
+
+		g2d.setColor(new Color(90, 80, 65));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 52));
+		g2d.drawString("Element: " + r.getElement() + "     Used in " + book.countSpellsWith(r.getName()) + " spells", textX, textY);
+		textY = textY + lineHeight;
+		g2d.drawString(getRuneSource(r), textX, textY);
+	}
+
+	private String getRuneSource(Rune r) {
+		if (r.getSpriteRow() <= 3) {
+			return "Every character starts with this rune";
+		}
+
+		for (int i = 0; i < roster.length; i++) {
+			if (roster[i].getSpecialRune().getName().equals(r.getName())) {
+				return roster[i].getName() + "'s special rune";
+			}
+		}
+
+		return "Found out in the swamp";
+	}
+
+	private void drawSpellCard(Graphics2D g2d, Spell spell, int row, int x, int y, int cardWidth, int cardHeight) {
+		int h = getHeight();
+		int pad = cardHeight / 10;
+		int pictureSize = drawCard(g2d, x, y, cardWidth, cardHeight);
+
+		BufferedImage spellPicture = spellFrames[aimRight][row][spellFrame];
+		if (spellPicture != null) {
+			g2d.drawImage(spellPicture, x + pad, y + pad, pictureSize, pictureSize, null);
+		}
+
+		int textX = x + pad * 2 + pictureSize;
+		int lineHeight = cardHeight / 5;
+		int textY = y + pad + lineHeight * 3 / 4;
+
+		g2d.setColor(new Color(30, 22, 15));
+		g2d.setFont(new Font("Arial", Font.BOLD, h / 38));
+		g2d.drawString(spell.getName(), textX, textY);
+		textY = textY + lineHeight;
+
+		g2d.setColor(new Color(90, 80, 65));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 52));
+		g2d.drawString(spell.getType() + " spell     " + spell.getElement() + "     Power " + spell.getPower(), textX, textY);
+		textY = textY + lineHeight;
+
+		String extra = "";
+		if (spell instanceof RangedSpell) {
+			RangedSpell ranged = (RangedSpell) spell;
+			extra = "Range: " + ranged.getRange() + " tiles";
+		} else if (spell instanceof MeleeSpell) {
+			MeleeSpell melee = (MeleeSpell) spell;
+			extra = "+" + melee.getBonusDamage() + " damage up close";
+		} else if (spell instanceof HealingSpell) {
+			extra = "Heals you instead of hurting an enemy";
+		}
+		String[] recipe = spell.getRecipe();
+		extra = extra + "     Costs " + book.getManaCost(recipe.length) + " mana";
+		g2d.drawString(extra, textX, textY);
+		textY = textY + lineHeight / 3;
+
+		int iconSize = lineHeight * 5 / 4;
+		int iconX = textX;
+		g2d.setFont(new Font("Arial", Font.BOLD, h / 55));
+		FontMetrics fm = g2d.getFontMetrics();
+		for (int i = 0; i < recipe.length; i++) {
+			if (i > 0) {
+				g2d.setColor(new Color(30, 22, 15));
+				g2d.drawString("+", iconX, textY + iconSize * 2 / 3);
+				iconX = iconX + fm.stringWidth("+ ") + 2;
+			}
+
+			Rune r = book.findRune(recipe[i]);
+			if (r != null) {
+				g2d.drawImage(runeFrames[r.getSpriteRow()][1], iconX, textY, iconSize, iconSize, null);
+			}
+			iconX = iconX + iconSize;
+
+			g2d.setColor(new Color(30, 22, 15));
+			g2d.drawString(recipe[i], iconX, textY + iconSize * 2 / 3);
+			iconX = iconX + fm.stringWidth(recipe[i] + " ") + 4;
+		}
+	}
+
+
+
+	private void preloadWorlds() {
+		makeBiome("swamp");
+		makeBiome("ember");
+		makeBiome("caverns");
+		makeBiome("canopy");
+		worldsLoaded = true;
+	}
+
+	private Background makeBiome(String name) {
+		if (name.equals("ember")) {
+			if (emberBiome == null) {
+				emberBiome = new EmberMarshBackground();
+			}
+			return emberBiome;
+		} else if (name.equals("caverns")) {
+			if (cavernsBiome == null) {
+				cavernsBiome = new SunkenCavernsBackground();
+			}
+			return cavernsBiome;
+		} else if (name.equals("canopy")) {
+			if (canopyBiome == null) {
+				canopyBiome = new CanopyBackground();
+			}
+			return canopyBiome;
+		} else {
+			if (swampBiome == null) {
+				swampBiome = new SwampBackground();
+			}
+			return swampBiome;
+		}
+	}
+
+	private void startExploring() {
+		explorerRow = selectedIndex;
+		walkSpeed = 0.8 + roster[selectedIndex].getSpeed() / 200.0;
+		biome = makeBiome("swamp");
+		placePlayer(biome.getStartX(), biome.getStartY());
+		leftHeld = false;
+		rightHeld = false;
+		jumpHeld = false;
+		jumpQueued = false;
+		currentScreen = exploreScreen;
+	}
+
+	private void placePlayer(int feetX, int feetY) {
+		playerX = feetX - hitWidth / 2.0;
+		playerY = feetY - hitHeight;
+		velocityY = 0;
+		currentRoom = biome.findRoom(feetX, feetY - hitHeight / 2.0);
+		if (currentRoom != null) {
+			currentRoom.markVisited();
+		}
+		fadeTimer = fadeTime;
+		titleTimer = titleTime;
+		moveCamera(true);
+	}
+
+	private void changeBiome(String target) {
+		String oldName = biome.getName();
+		biome = null;
+		Background next = makeBiome(target);
+		BiomeExit arrival = next.findExitTo(oldName);
+		biome = next;
+		if (arrival != null) {
+			placePlayer(arrival.getSpawnX(), arrival.getSpawnY());
+		} else {
+			placePlayer(next.getStartX(), next.getStartY());
+		}
+	}
+
+	private void updateExploring() {
+		if (biome == null) {
+			return;
+		}
+
+		if (mapOpen) {
+			mapBlinkTimer++;
+			if (mapBlinkTimer >= 60) {
+				mapBlinkTimer = 0;
+				if (mapBlinkOn) {
+					mapBlinkOn = false;
+				} else {
+					mapBlinkOn = true;
+				}
+			}
+			return;
+		}
+
+		if (downTapTimer > 0) {
+			downTapTimer--;
+		}
+		if (dropTimer > 0) {
+			dropTimer--;
+			if (dropHeld) {
+				dropTimer = 20;
+			}
+		}
+		if (fadeTimer > 0) {
+			fadeTimer--;
+		}
+		if (titleTimer > 0) {
+			titleTimer--;
+		}
+
+		moveAmount = 0;
+		if (leftHeld) {
+			moveAmount = moveAmount - walkSpeed;
+			facing = dirLeft;
+		}
+		if (rightHeld) {
+			moveAmount = moveAmount + walkSpeed;
+			facing = dirRight;
+		}
+		if (!leftHeld && !rightHeld) {
+			facing = dirFront;
+		}
+
+		if (jumpQueued && onGround) {
+			velocityY = -jumpSpeed;
+		}
+		jumpQueued = false;
+		if (!jumpHeld && velocityY < -1.0) {
+			velocityY = -1.0;
+		}
+
+		velocityY = velocityY + biome.getGravity();
+		if (velocityY > maxFallSpeed) {
+			velocityY = maxFallSpeed;
+		}
+
+		moveSideways(moveAmount);
+		onGround = false;
+		moveUpOrDown(velocityY);
+
+		int animSpeed = 90;
+		if (!onGround && velocityY < 0) {
+			animSpeed = 16;
+		} else if (!onGround) {
+			animSpeed = 50;
+		} else if (moveAmount != 0) {
+			animSpeed = 24;
+		}
+		animTimer++;
+		if (animTimer >= animSpeed) {
+			animTimer = 0;
+			if (animStep == 0) {
+				animStep = 1;
+			} else {
+				animStep = 0;
+			}
+		}
+
+		double centerX = playerX + hitWidth / 2.0;
+		double centerY = playerY + hitHeight / 2.0;
+
+		if (centerX < 0) {
+			leaveBiome("left");
+			return;
+		} else if (centerX > biome.getWidthInPixels()) {
+			leaveBiome("right");
+			return;
+		} else if (centerY < 0) {
+			leaveBiome("top");
+			return;
+		} else if (centerY > biome.getHeightInPixels()) {
+			leaveBiome("bottom");
+			return;
+		}
+
+		Room room = biome.findRoom(centerX, centerY);
+		if (room != null && room != currentRoom) {
+			currentRoom = room;
+			currentRoom.markVisited();
+			fadeTimer = fadeTime;
+			moveCamera(true);
+		} else {
+			moveCamera(false);
+		}
+
+		double viewWidth = getWidth() / getZoom();
+		biome.update(cameraX, cameraY, viewWidth, viewHeight);
+	}
+
+	private void leaveBiome(String side) {
+		BiomeExit exit = biome.findExit(side);
+		if (exit != null) {
+			changeBiome(exit.getTarget());
+		} else if (side.equals("left")) {
+			playerX = -hitWidth / 2.0 + 1;
+		} else if (side.equals("right")) {
+			playerX = biome.getWidthInPixels() - hitWidth / 2.0 - 1;
+		} else if (side.equals("top")) {
+			playerY = -hitHeight / 2.0 + 1;
+			velocityY = 0;
+		} else {
+			placePlayer(biome.getStartX(), biome.getStartY());
+		}
+	}
+
+	private void moveSideways(double amount) {
+		playerX = playerX + amount;
+		int top = (int) Math.floor(playerY / Background.tileSize);
+		int bottom = (int) Math.floor((playerY + hitHeight - 0.01) / Background.tileSize);
+
+		if (amount > 0) {
+			int col = (int) Math.floor((playerX + hitWidth - 0.01) / Background.tileSize);
+			for (int row = top; row <= bottom; row++) {
+				if (biome.isSolid(col, row)) {
+					playerX = col * Background.tileSize - hitWidth;
+					return;
+				}
+			}
+		} else if (amount < 0) {
+			int col = (int) Math.floor(playerX / Background.tileSize);
+			for (int row = top; row <= bottom; row++) {
+				if (biome.isSolid(col, row)) {
+					playerX = (col + 1) * Background.tileSize;
+					return;
+				}
+			}
+		}
+	}
+
+	private void moveUpOrDown(double amount) {
+		double oldBottom = playerY + hitHeight;
+		playerY = playerY + amount;
+		int left = (int) Math.floor(playerX / Background.tileSize);
+		int right = (int) Math.floor((playerX + hitWidth - 0.01) / Background.tileSize);
+
+		if (amount > 0) {
+			int row = (int) Math.floor((playerY + hitHeight - 0.01) / Background.tileSize);
+			for (int col = left; col <= right; col++) {
+				boolean landOnPlatform = false;
+				if (biome.isPlatform(col, row) && dropTimer == 0 && oldBottom <= row * Background.tileSize + 0.01) {
+					landOnPlatform = true;
+				}
+				if (biome.isSolid(col, row) || landOnPlatform) {
+					playerY = row * Background.tileSize - hitHeight;
+					velocityY = 0;
+					onGround = true;
+					return;
+				}
+			}
+		} else if (amount < 0) {
+			int row = (int) Math.floor(playerY / Background.tileSize);
+			for (int col = left; col <= right; col++) {
+				if (biome.isSolid(col, row)) {
+					playerY = (row + 1) * Background.tileSize;
+					velocityY = 0;
+					return;
+				}
+			}
+		}
+	}
+
+	private double getZoom() {
+		return getHeight() / (double) viewHeight;
+	}
+
+	private void moveCamera(boolean snap) {
+		double viewWidth = getWidth() / getZoom();
+		double centerX = playerX + hitWidth / 2.0;
+		double centerY = playerY + hitHeight / 2.0;
+
+		if (snap) {
+			cameraX = centerX - viewWidth / 2;
+			cameraY = centerY - viewHeight / 2;
+		}
+
+		double boxLeft = cameraX + viewWidth * 0.42;
+		double boxRight = cameraX + viewWidth * 0.58;
+		double boxTop = cameraY + viewHeight * 0.35;
+		double boxBottom = cameraY + viewHeight * 0.62;
+
+		if (centerX > boxRight) {
+			cameraX = cameraX + (centerX - boxRight);
+		}
+		if (centerX < boxLeft) {
+			cameraX = cameraX - (boxLeft - centerX);
+		}
+		if (centerY > boxBottom) {
+			cameraY = cameraY + (centerY - boxBottom);
+		}
+		if (centerY < boxTop) {
+			cameraY = cameraY - (boxTop - centerY);
+		}
+
+		if (currentRoom != null) {
+			if (currentRoom.getWidth() <= viewWidth) {
+				cameraX = currentRoom.getX() + (currentRoom.getWidth() - viewWidth) / 2;
+			} else if (cameraX < currentRoom.getX()) {
+				cameraX = currentRoom.getX();
+			} else if (cameraX > currentRoom.getX() + currentRoom.getWidth() - viewWidth) {
+				cameraX = currentRoom.getX() + currentRoom.getWidth() - viewWidth;
+			}
+
+			if (currentRoom.getHeight() <= viewHeight) {
+				cameraY = currentRoom.getY() + (currentRoom.getHeight() - viewHeight) / 2;
+			} else if (cameraY < currentRoom.getY()) {
+				cameraY = currentRoom.getY();
+			} else if (cameraY > currentRoom.getY() + currentRoom.getHeight() - viewHeight) {
+				cameraY = currentRoom.getY() + currentRoom.getHeight() - viewHeight;
+			}
+		}
+	}
+
+	private void drawExploring(Graphics2D g2d) {
+		int w = getWidth();
+		int h = getHeight();
+		Background shown = biome;
+
+		g2d.setColor(Color.BLACK);
+		g2d.fillRect(0, 0, w, h);
+		if (shown == null) {
+			return;
+		}
+
+		g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+		double zoom = getZoom();
+		double camX = cameraX;
+		double camY = cameraY;
+
+		shown.draw(g2d, camX, camY, zoom, w, h);
+
+		int dir = facing;
+		if (!onGround) {
+			if (velocityY < 0) {
+				if (facing == dirRight) {
+					dir = dirJumpRight;
+				} else if (facing == dirLeft) {
+					dir = dirJumpLeft;
+				} else {
+					dir = dirJumpFront;
+				}
+			} else {
+				if (facing == dirRight) {
+					dir = dirFallRight;
+				} else if (facing == dirLeft) {
+					dir = dirFallLeft;
+				} else {
+					dir = dirFallFront;
+				}
+			}
+		}
+
+		int spriteSize = (int) Math.round(characterFrameSize * zoom / Background.imageScale);
+		int playerScreenX = (int) Math.round((playerX + hitWidth / 2.0 - camX) * zoom);
+		int feetScreenY = (int) Math.round((playerY + hitHeight - camY) * zoom);
+		g2d.drawImage(frames[explorerRow][dir * 2 + animStep], playerScreenX - spriteSize / 2, feetScreenY - spriteSize, spriteSize, spriteSize, null);
+
+		shown.drawEffects(g2d, camX, camY, zoom, w, h, playerScreenX, feetScreenY - spriteSize / 3);
+
+		Room room = currentRoom;
+		if (room != null) {
+			int roomLeft = (int) Math.round((room.getX() - camX) * zoom);
+			int roomTop = (int) Math.round((room.getY() - camY) * zoom);
+			int roomRight = (int) Math.round((room.getX() + room.getWidth() - camX) * zoom);
+			int roomBottom = (int) Math.round((room.getY() + room.getHeight() - camY) * zoom);
+			g2d.setColor(Color.BLACK);
+			if (roomLeft > 0) {
+				g2d.fillRect(0, 0, roomLeft, h);
+			}
+			if (roomRight < w) {
+				g2d.fillRect(roomRight, 0, w - roomRight, h);
+			}
+			if (roomTop > 0) {
+				g2d.fillRect(0, 0, w, roomTop);
+			}
+			if (roomBottom < h) {
+				g2d.fillRect(0, roomBottom, w, h - roomBottom);
+			}
+		}
+
+		if (fadeTimer > 0) {
+			int alpha = fadeTimer * 255 / fadeTime;
+			g2d.setColor(new Color(0, 0, 0, alpha));
+			g2d.fillRect(0, 0, w, h);
+		}
+
+		if (titleTimer > 0 && !mapOpen) {
+			int alpha = 255;
+			if (titleTimer > titleTime - 100) {
+				alpha = (titleTime - titleTimer) * 255 / 100;
+			}
+			if (titleTimer < 150) {
+				alpha = titleTimer * 255 / 150;
+			}
+			g2d.setFont(new Font("Serif", Font.BOLD, h / 14));
+			g2d.setColor(new Color(0, 0, 0, alpha / 2));
+			drawCentered(g2d, shown.getDisplayName(), w / 2 + 3, h / 4 + 3);
+			g2d.setColor(new Color(245, 238, 215, alpha));
+			drawCentered(g2d, shown.getDisplayName(), w / 2, h / 4);
+			g2d.fillRect(w / 2 - w / 8, h / 4 + h / 40, w / 4, 3);
+		}
+
+		if (mapOpen) {
+			drawMap(g2d, shown);
+			return;
+		}
+
+		g2d.setColor(new Color(245, 238, 215, 170));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 55));
+		drawCentered(g2d, "A/D walk     SPACE jump     double tap S drop down     M map     Q character select", w / 2, h - h / 40);
+	}
+
+	private void drawMap(Graphics2D g2d, Background shown) {
+		int w = getWidth();
+		int h = getHeight();
+
+		g2d.setColor(new Color(12, 10, 16, 240));
+		g2d.fillRect(0, 0, w, h);
+
+		int scale = (w * 9 / 10) / shown.getMapWidth();
+		if ((h * 7 / 10) / shown.getMapHeight() < scale) {
+			scale = (h * 7 / 10) / shown.getMapHeight();
+		}
+		if (scale < 1) {
+			scale = 1;
+		}
+		int mapX = (w - shown.getMapWidth() * scale) / 2;
+		int mapY = (h - shown.getMapHeight() * scale) / 2 + h / 30;
+
+		int frameWidth = shown.getMapWidth() * scale;
+		int frameHeight = shown.getMapHeight() * scale;
+		g2d.setColor(new Color(34, 30, 28));
+		g2d.fillRoundRect(mapX - 12, mapY - 12, frameWidth + 24, frameHeight + 24, 16, 16);
+		g2d.setColor(new Color(150, 130, 96));
+		g2d.setStroke(new BasicStroke(3));
+		g2d.drawRoundRect(mapX - 12, mapY - 12, frameWidth + 24, frameHeight + 24, 16, 16);
+
+		shown.drawMap(g2d, mapX, mapY, scale);
+
+		int dotX = mapX + (int) ((playerX + hitWidth / 2.0) / Background.tileSize * scale);
+		int dotY = mapY + (int) ((playerY + hitHeight / 2.0) / Background.tileSize * scale);
+		int dotSize = scale * 3 + 4;
+		if (mapBlinkOn) {
+			g2d.setColor(new Color(40, 32, 26));
+			g2d.fillOval(dotX - dotSize / 2 - 2, dotY - dotSize / 2 - 2, dotSize + 4, dotSize + 4);
+			g2d.setColor(new Color(240, 80, 60));
+			g2d.fillOval(dotX - dotSize / 2, dotY - dotSize / 2, dotSize, dotSize);
+		}
+
+		g2d.setColor(new Color(245, 238, 215));
+		g2d.setFont(new Font("Serif", Font.BOLD, h / 16));
+		drawCentered(g2d, shown.getDisplayName(), w / 2, h / 9);
+		g2d.fillRect(w / 2 - w / 8, h / 9 + h / 60, w / 4, 3);
+
+		g2d.setColor(new Color(245, 238, 215, 170));
+		g2d.setFont(new Font("Arial", Font.PLAIN, h / 55));
+		drawCentered(g2d, "Only rooms you have been to show up          M to close the map", w / 2, h - h / 40);
+	}
+
+	  private void handleExploreInput(KeyEvent e) {
+	  	int key = e.getKeyCode();
+
+	  	if (mapOpen && key != KeyEvent.VK_M && key != KeyEvent.VK_Q) {
+	  		return;
+	  	}
+
+	  	if (key == KeyEvent.VK_LEFT || key == KeyEvent.VK_A) {
+	  		leftHeld = true;
+	  	} else if (key == KeyEvent.VK_RIGHT || key == KeyEvent.VK_D) {
+	  		rightHeld = true;
+	  	} else if (key == KeyEvent.VK_SPACE) {
+	  		if (!jumpHeld) {
+	  			jumpQueued = true;
+	  		}
+	  		jumpHeld = true;
+	  	} else if (key == KeyEvent.VK_DOWN || key == KeyEvent.VK_S) {
+	  		if (!dropHeld) {
+	  			if (downTapTimer > 0) {
+	  				dropTimer = 20;
+	  				downTapTimer = 0;
+	  			} else {
+	  				downTapTimer = 60;
+	  			}
+	  		}
+	  		dropHeld = true;
+	  	} else if (key == KeyEvent.VK_M) {
+	  		if (mapOpen) {
+	  			mapOpen = false;
+	  		} else {
+	  			mapOpen = true;
+	  			mapBlinkOn = true;
+	  			mapBlinkTimer = 0;
+	  			leftHeld = false;
+	  			rightHeld = false;
+	  			jumpHeld = false;
+	  			jumpQueued = false;
+	  		}
+	  	} else if (key == KeyEvent.VK_Q) {
+	  		mapOpen = false;
+	  		currentScreen = charSelectScreen;
+	  	}
+	  }
+
+	  @Override
+	  public void mouseDragged(MouseEvent e) {
+		// TODO Auto-generated method stub
+	//	throw new UnsupportedOperationException("Unimplemented method 'mouseDragged'");
+		//System.out.println("mouse dragged");
+	  
+}
+
+	  @Override
+	  public void mouseMoved(MouseEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'mouseMoved'");
+		//System.out.println("mouse moved");
+	  }
+
+	  @Override
+	  public void mouseClicked(MouseEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'mouseClicked'");
+		//System.out.println("mouse clicked");
+
+	  }
+
+	  @Override
+	  public void mousePressed(MouseEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'mousePressed'");
+		//System.out.println("mouse pressed");
+	  }
+
+	  @Override
+	  public void mouseReleased(MouseEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'mouseReleased'");
+	  }
+
+	  @Override
+	  public void mouseEntered(MouseEvent e) {
+		// TODO Auto-generated method stub
+		////throw new UnsupportedOperationException("Unimplemented method 'mouseEntered'");
+	  }
+
+	  @Override
+	  public void mouseExited(MouseEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'mouseExited'");
+	  }
+
+	  @Override
+	  public void mouseWheelMoved(MouseWheelEvent e) {
+		//System.out.println("mouse wheel scroll amt" +e.getScrollAmount());
+		//System.out.println("mouse wheel scroll rotation" +e.getWheelRotation());
+		//System.out.println("mouse wheel scroll rotation perc" +e.getPreciseWheelRotation());
+
+		if (currentScreen == spellbookScreen) {
+			spellbookScroll = spellbookScroll + (int) (e.getPreciseWheelRotation() * getHeight() / 12);
+		}
+	  }
+
+	  @Override
+	  public void keyTyped(KeyEvent e) {
+		// TODO Auto-generated method stub
+		//throw new UnsupportedOperationException("Unimplemented method 'keyTyped'");
+	  }
+
+	  @Override
+	  public void keyPressed(KeyEvent e) {
+		if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
+			System.exit(0);
+		}
+
+		switch (currentScreen) {
+			case charSelectScreen:
+				handleCharacterSelectInput(e);
+				break;
+			case spellbookScreen:
+				handleSpellbookInput(e);
+				break;
+			case exploreScreen:
+				handleExploreInput(e);
+				break;
+		}
+	  }
+
+	  private void handleCharacterSelectInput(KeyEvent e) {
+	  	int key = e.getKeyCode();
+
+	  	if (key == KeyEvent.VK_LEFT || key == KeyEvent.VK_A || key == KeyEvent.VK_UP || key == KeyEvent.VK_W) {
+	  		selectedIndex = (selectedIndex - 1 + roster.length) % roster.length;
+	  		spinCounter = 0;
+	  	} else if (key == KeyEvent.VK_RIGHT || key == KeyEvent.VK_D || key == KeyEvent.VK_DOWN || key == KeyEvent.VK_S) {
+	  		selectedIndex = (selectedIndex + 1) % roster.length;
+	  		spinCounter = 0;
+	  	} else if (key == KeyEvent.VK_B) {
+	  		openSpellbook();
+	  	} else if (key == KeyEvent.VK_ENTER && worldsLoaded) {
+	  		startExploring();
+	  	}
+	  }
+
+	  private void handleSpellbookInput(KeyEvent e) {
+	  	int key = e.getKeyCode();
+
+	  	if (key == KeyEvent.VK_UP || key == KeyEvent.VK_W) {
+	  		upHeld = true;
+	  	} else if (key == KeyEvent.VK_DOWN || key == KeyEvent.VK_S) {
+	  		downHeld = true;
+	  	} else if (key == KeyEvent.VK_B || key == KeyEvent.VK_BACK_SPACE) {
+	  		currentScreen = charSelectScreen;
+	  	}
+	  }
+
+	  @Override
+	  public void keyReleased(KeyEvent e) {
+		int key = e.getKeyCode();
+		if (key == KeyEvent.VK_UP || key == KeyEvent.VK_W) {
+			upHeld = false;
+		} else if (key == KeyEvent.VK_DOWN || key == KeyEvent.VK_S) {
+			downHeld = false;
+		}
+
+		if (key == KeyEvent.VK_LEFT || key == KeyEvent.VK_A) {
+			leftHeld = false;
+		} else if (key == KeyEvent.VK_RIGHT || key == KeyEvent.VK_D) {
+			rightHeld = false;
+		} else if (key == KeyEvent.VK_SPACE) {
+			jumpHeld = false;
+		}
+		if (key == KeyEvent.VK_DOWN || key == KeyEvent.VK_S) {
+			dropHeld = false;
+		}
+	  }
+
+}
