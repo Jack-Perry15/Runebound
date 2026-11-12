@@ -6,12 +6,21 @@ public class Platform {
 	private int y;
 	private int width;
 	private int height;
+	private boolean solid = false;
 
 	public Platform(int x, int y, int width, int height) {
 		this.x = x;
 		this.y = y;
 		this.width = width;
 		this.height = height;
+	}
+
+	public Platform(int x, int y, int width, int height, boolean solid) {
+		this.x = x;
+		this.y = y;
+		this.width = width;
+		this.height = height;
+		this.solid = solid;
 	}
 
 	public int getX() {
@@ -29,6 +38,10 @@ public class Platform {
 
 	public int getHeight() {
 		return height;
+	}
+
+	public boolean isSolid() {
+		return solid;
 	}
 
 }

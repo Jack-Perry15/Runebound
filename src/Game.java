@@ -66,7 +66,7 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 	private SpellBook book = new SpellBook();
 
-	//rune pictures: [which rune][animation frame]
+
 	private BufferedImage[][] runeFrames;
 	private int runeFrame = 0;
 	private int runeFrameTimer = 0;
@@ -89,7 +89,9 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 	private int animStep = 0;
 	private int animTimer = 0;
 
-	private Platform[] platforms;
+	private Level level;
+	private double cameraX = 0;
+	private double cameraY = 0;
 	private int explorerRow = 0;
 	private double walkSpeed = 1.0;
 	private double playerX = 0;
@@ -151,6 +153,8 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 	private int enemyCooldown = 0;
 	private boolean enemyAttackUp = false;
 
+	private ArrayList<Level> levels = new ArrayList<Level>();
+
 
 	public Game() {
 
@@ -158,6 +162,11 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		loadSpellSprites();
 		loadRuneSprites();
 		loadEnemySprites();
+
+		levels.add(new Swamp());
+		levels.add(new EmberMarsh());
+		levels.add(new SunkenCaverns());
+		levels.add(new Canopy());
 
 		this.addKeyListener(this);
 		this.addMouseListener(this);
@@ -215,7 +224,6 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		}
 	}
 
-	//runeGrid.png has one row per rune and 4 columns of it floating and glowing
 	private void loadRuneSprites() {
 		runeFrames = new BufferedImage[12][4];
 		BufferedImage sheet;
@@ -290,7 +298,6 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 
 		g2d.clearRect(0,0,getSize().width, getSize().height);
-		//start coding here
 
 		switch (currentScreen) {
 			case charSelectScreen:
@@ -306,7 +313,7 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 
 
-		//do not delte this line of code, it draws everything above
+
 		twoDgraph.drawImage(back, null, 0, 0);
 
 
@@ -704,16 +711,15 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		hero = makeHero(selectedIndex);
 		walkSpeed = 0.8 + hero.getSpeed() / 200.0;
 
-		int viewWidth = (int) getViewWidth();
-		platforms = new Platform[2];
-		platforms[0] = new Platform(0, viewHeight - 40, viewWidth, 40);
-		platforms[1] = new Platform(viewWidth * 11 / 20, viewHeight - 110, 110, 12);
+		level = levels.get(0);
+		Background bg = level.getBackground();
+		placePlayer(bg.getStartX(), bg.getStartY());
 
 		worldRunes.clear();
-		addWorldRune("Lightning Rune", "Lightning", 8, viewWidth / 10, platforms[0].getY());
-		addWorldRune("Ice Rune", "Ice", 9, viewWidth * 2 / 5, platforms[0].getY());
-		addWorldRune("Venom Rune", "Venom", 10, platforms[1].getX() + platforms[1].getWidth() / 2, platforms[1].getY());
-		addWorldRune("Shadow Rune", "Shadow", 11, viewWidth * 9 / 10, platforms[0].getY());
+		addWorldRune("Lightning Rune", "Lightning", 8, bg.getStartX() - 100, bg.getStartY());
+		addWorldRune("Ice Rune", "Ice", 9, bg.getStartX() - 75, bg.getStartY());
+		addWorldRune("Venom Rune", "Venom", 10, bg.getStartX() - 50, bg.getStartY());
+		addWorldRune("Shadow Rune", "Shadow", 11, bg.getStartX() - 25, bg.getStartY());
 
 		synchronized (effects) {
 			effects.clear();
@@ -724,10 +730,9 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		manaTimer = 0;
 		upHeld = false;
 
-		enemyType = 0;
-		makeEnemy();
+		//enemyType = 0;
+		//makeEnemy();
 
-		placePlayer();
 		leftHeld = false;
 		rightHeld = false;
 		jumpHeld = false;
@@ -735,18 +740,35 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		currentScreen = exploreScreen;
 	}
 
-	private void placePlayer() {
-		playerX = getViewWidth() / 4;
-		playerY = platforms[0].getY() - hitHeight;
+	private void placePlayer(int feetX, int feetY) {
+		playerX = feetX - hitWidth / 2.0;
+		playerY = feetY - hitHeight;
 		velocityY = 0;
-		onGround = true;
+		moveCamera();
+	}
+
+	private void leaveLevel(String side) {
+		BiomeExit exit = level.getBackground().findExit(side);
+		if (exit == null) {
+			return;
+		}
+
+		String oldName = level.getBackground().getName();
+		for (int i = 0; i < levels.size(); i++) {
+			if (levels.get(i).getBackground().getName().equals(exit.getTarget())) {
+				level = levels.get(i);
+			}
+		}
+		BiomeExit arrival = level.getBackground().findExitTo(oldName);
+		placePlayer(arrival.getSpawnX(), arrival.getSpawnY());
+		worldRunes.clear();
 	}
 
 	private void updateExploring() {
 		circle.update();
 		updateEffects();
 
-		updateEnemy();
+		//updateEnemy();
 
 		manaTimer++;
 		if (manaTimer >= 40) {
@@ -796,25 +818,14 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 			velocityY = -1.0;
 		}
 
-		velocityY = velocityY + gravity;
+		velocityY = velocityY + level.getBackground().getGravity();
 		if (velocityY > maxFallSpeed) {
 			velocityY = maxFallSpeed;
 		}
 
-		playerX = playerX + moveAmount;
-		if (playerX < 0) {
-			playerX = 0;
-		}
-		if (playerX > getViewWidth() - hitWidth) {
-			playerX = getViewWidth() - hitWidth;
-		}
-
+		moveSideways(moveAmount);
 		onGround = false;
 		moveUpOrDown(velocityY);
-
-		if (playerY > viewHeight + 40) {
-			placePlayer();
-		}
 
 		int animSpeed = 90;
 		if (!onGround && velocityY < 0) {
@@ -833,24 +844,123 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 				animStep = 0;
 			}
 		}
+
+		Background bg = level.getBackground();
+		double centerX = playerX + hitWidth / 2.0;
+		double centerY = playerY + hitHeight / 2.0;
+		if (centerX < 0) {
+			leaveLevel("left");
+		} else if (centerX > bg.getWidthInPixels()) {
+			leaveLevel("right");
+		} else if (centerY < 0) {
+			leaveLevel("top");
+		} else if (centerY > bg.getHeightInPixels()) {
+			leaveLevel("bottom");
+		}
+
+		moveCamera();
+		level.getBackground().update(cameraX, cameraY, getViewWidth(), viewHeight);
+	}
+
+	private Platform getTile(int row, int col) {
+		Platform[][] plats = level.getPlatforms();
+		if (row < 0 || col < 0 || row >= plats.length || col >= plats[0].length) {
+			return null;
+		}
+		return plats[row][col];
+	}
+
+	private void moveSideways(double amount) {
+		playerX = playerX + amount;
+		int top = (int) (playerY / 16);
+		int bottom = (int) ((playerY + hitHeight - 1) / 16);
+
+		if (amount > 0) {
+			int col = (int) ((playerX + hitWidth - 1) / 16);
+			for (int row = top; row <= bottom; row++) {
+				Platform p = getTile(row, col);
+				if (p != null && p.isSolid()) {
+					playerX = col * 16 - hitWidth;
+					return;
+				}
+			}
+		} else if (amount < 0) {
+			int col = (int) (playerX / 16);
+			for (int row = top; row <= bottom; row++) {
+				Platform p = getTile(row, col);
+				if (p != null && p.isSolid()) {
+					playerX = (col + 1) * 16;
+					return;
+				}
+			}
+		}
 	}
 
 	private void moveUpOrDown(double amount) {
 		double oldBottom = playerY + hitHeight;
 		playerY = playerY + amount;
+		int left = (int) (playerX / 16);
+		int right = (int) ((playerX + hitWidth - 1) / 16);
 
 		if (amount > 0) {
-			double newBottom = playerY + hitHeight;
-			for (int i = 0; i < platforms.length; i++) {
-				Platform p = platforms[i];
-				boolean overlapsSideways = playerX + hitWidth > p.getX() && playerX < p.getX() + p.getWidth();
-				if (overlapsSideways && dropTimer == 0 && oldBottom <= p.getY() + 0.01 && newBottom >= p.getY()) {
+			int row = (int) ((playerY + hitHeight) / 16);
+			for (int col = left; col <= right; col++) {
+				Platform p = getTile(row, col);
+				if (p != null && (p.isSolid() || (dropTimer == 0 && oldBottom <= p.getY()))) {
 					playerY = p.getY() - hitHeight;
 					velocityY = 0;
 					onGround = true;
 					return;
 				}
 			}
+		} else if (amount < 0) {
+			int row = (int) (playerY / 16);
+			for (int col = left; col <= right; col++) {
+				Platform p = getTile(row, col);
+				if (p != null && p.isSolid()) {
+					playerY = (row + 1) * 16;
+					velocityY = 0;
+					return;
+				}
+			}
+		}
+	}
+
+	private void moveCamera() {
+		double viewWidth = getViewWidth();
+		double centerX = playerX + hitWidth / 2.0;
+		double centerY = playerY + hitHeight / 2.0;
+
+		double boxLeft = cameraX + viewWidth * 0.42;
+		double boxRight = cameraX + viewWidth * 0.58;
+		double boxTop = cameraY + viewHeight * 0.35;
+		double boxBottom = cameraY + viewHeight * 0.62;
+
+		if (centerX > boxRight) {
+			cameraX = cameraX + (centerX - boxRight);
+		}
+		if (centerX < boxLeft) {
+			cameraX = cameraX - (boxLeft - centerX);
+		}
+		if (centerY > boxBottom) {
+			cameraY = cameraY + (centerY - boxBottom);
+		}
+		if (centerY < boxTop) {
+			cameraY = cameraY - (boxTop - centerY);
+		}
+
+		Background bg = level.getBackground();
+		if (cameraX > bg.getWidthInPixels() - viewWidth) {
+			cameraX = bg.getWidthInPixels() - viewWidth;
+		}
+		if (cameraX < 0) {
+			cameraX = 0;
+		}
+		if (cameraY > bg.getHeightInPixels() - viewHeight) {
+			cameraY = bg.getHeightInPixels() - viewHeight;
+		}
+		if (cameraY < 0) {
+			cameraY = 0;
 		}
 	}
 
@@ -882,7 +992,7 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		} else {
 			enemy = new Enemy(20, 5);
 		}
-		enemy.setPosition((int) (getViewWidth() * 3 / 4), platforms[0].getY());
+		enemy.setPosition((int) (playerX + 100), (int) (playerY + hitHeight));
 		enemyStep = 0;
 		enemyStepTimer = 0;
 		enemyAttackTimer = 0;
@@ -1163,13 +1273,13 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 			double room = 0;
 			if (aim == aimLeft) {
-				room = startX;
+				room = startX - cameraX;
 			} else if (aim == aimRight) {
-				room = viewWidth - startX;
+				room = cameraX + viewWidth - startX;
 			} else if (aim == aimUp) {
-				room = startY;
+				room = startY - cameraY;
 			} else {
-				room = viewHeight - startY;
+				room = cameraY + viewHeight - startY;
 			}
 			if (travelDistance > room) {
 				travelDistance = room;
@@ -1198,17 +1308,17 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 			if (dirY != 0) {
 				centerY = bodyY + dirY * distance;
 			}
-			if (centerX < half) {
-				centerX = half;
+			if (centerX < cameraX + half) {
+				centerX = cameraX + half;
 			}
-			if (centerX > viewWidth - half) {
-				centerX = viewWidth - half;
+			if (centerX > cameraX + viewWidth - half) {
+				centerX = cameraX + viewWidth - half;
 			}
-			if (centerY < half) {
-				centerY = half;
+			if (centerY < cameraY + half) {
+				centerY = cameraY + half;
 			}
-			if (centerY > viewHeight - half) {
-				centerY = viewHeight - half;
+			if (centerY > cameraY + viewHeight - half) {
+				centerY = cameraY + viewHeight - half;
 			}
 			addEffect(new SpellEffect(row, aim, centerX - half, centerY - half, 0, 0, 0));
 		}
@@ -1232,8 +1342,8 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 				SpellEffect e = effects.get(i);
 				BufferedImage picture = spellFrames[e.getDirection()][e.getRow()][e.getFrame()];
 				if (picture != null) {
-					int sx = (int) Math.round(e.getX() * zoom);
-					int sy = (int) Math.round(e.getY() * zoom);
+					int sx = (int) Math.round((e.getX() - cameraX) * zoom);
+					int sy = (int) Math.round((e.getY() - cameraY) * zoom);
 					g2d.drawImage(picture, sx, sy, size, size, null);
 				}
 			}
@@ -1245,8 +1355,8 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		int size = (int) Math.round(worldRuneSize * zoom);
 		for (int i = 0; i < worldRunes.size(); i++) {
 			Rune r = worldRunes.get(i);
-			int sx = (int) Math.round(r.getX() * zoom);
-			int sy = (int) Math.round(r.getY() * zoom);
+			int sx = (int) Math.round((r.getX() - cameraX) * zoom);
+			int sy = (int) Math.round((r.getY() - cameraY) * zoom);
 			g2d.drawImage(runeFrames[r.getSpriteRow()][runeFrame], sx, sy, size, size, null);
 			if (r == nearby) {
 				g2d.setColor(new Color(245, 238, 215));
@@ -1411,27 +1521,17 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 		g2d.setColor(Color.BLACK);
 		g2d.fillRect(0, 0, w, h);
-		if (platforms == null) {
+		if (level == null) {
 			return;
 		}
 
 		g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 		double zoom = getZoom();
 
-		for (int i = 0; i < platforms.length; i++) {
-			Platform p = platforms[i];
-			int px = (int) Math.round(p.getX() * zoom);
-			int py = (int) Math.round(p.getY() * zoom);
-			int pw = (int) Math.round(p.getWidth() * zoom);
-			int ph = (int) Math.round(p.getHeight() * zoom);
-			g2d.setColor(new Color(70, 62, 52));
-			g2d.fillRect(px, py, pw, ph);
-			g2d.setColor(new Color(150, 130, 96));
-			g2d.fillRect(px, py, pw, Math.max(3, (int) Math.round(2 * zoom)));
-		}
+		level.getBackground().draw(g2d, cameraX, cameraY, zoom, w, h);
 
 		drawWorldRunes(g2d, zoom);
-		drawEnemy(g2d, zoom);
+		//drawEnemy(g2d, zoom);
 
 		int dir = facing;
 		if (!onGround) {
@@ -1455,10 +1555,11 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		}
 
 		int spriteSize = (int) Math.round(characterFrameSize * zoom / imageScale);
-		int playerScreenX = (int) Math.round((playerX + hitWidth / 2.0) * zoom);
-		int feetScreenY = (int) Math.round((playerY + hitHeight) * zoom);
+		int playerScreenX = (int) Math.round((playerX + hitWidth / 2.0 - cameraX) * zoom);
+		int feetScreenY = (int) Math.round((playerY + hitHeight - cameraY) * zoom);
 		g2d.drawImage(frames[explorerRow][dir * 2 + animStep], playerScreenX - spriteSize / 2, feetScreenY - spriteSize, spriteSize, spriteSize, null);
 
+		level.getBackground().drawEffects(g2d, cameraX, cameraY, zoom, w, h, playerScreenX, feetScreenY - spriteSize / 3);
 		drawEffects(g2d, zoom);
 		drawHud(g2d);
 		if (circle.isOpen()) {
@@ -1538,9 +1639,9 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		// TODO Auto-generated method stub
 		//throw new UnsupportedOperationException("Unimplemented method 'mousePressed'");
 		//System.out.println("mouse pressed");
-		if (currentScreen == exploreScreen) {
-			nextEnemy();
-		}
+		//if (currentScreen == exploreScreen) {
+		//	nextEnemy();
+		//}
 	  }
 
 	  @Override
