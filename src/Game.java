@@ -92,6 +92,13 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 	private Level level;
 	private double cameraX = 0;
 	private double cameraY = 0;
+	private Room currentRoom;
+	private BiomeExit exitTaken;
+	private static final int fadeTime = 60;
+	private static final int titleTime = 600;
+	private int fadeTimer = 0;
+	private int fadeOutTimer = 0;
+	private int titleTimer = 0;
 	private int explorerRow = 0;
 	private double walkSpeed = 1.0;
 	private double playerX = 0;
@@ -126,7 +133,6 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 	private static final int enemyRightColumn = 1;
 	private static final int enemyLeftColumn = 9;
 	private static final int enemyFadeTime = 80;
-	private static final int enemyRespawnTime = 400;
 	private static final int enemyAttackTime = 60;
 	private static final int enemyHitTime = 40;
 	private static final int enemyRecoverTime = 20;
@@ -140,7 +146,7 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 	private static final int enemyHitHeight = 40;
 	private BufferedImage[][] enemyFrames;
 	private String[] enemyNames = new String[] {
-		"Bog Leech", "Mire Lurker", "Mire Wraith",
+		"Bog Leech", "Swamp Lurker", "Mire Wraith",
 		"Cinder Gnat", "Magma Toad", "Charred Stalker",
 		"Glowcap Crawler", "Drowned Angler", "Bonewater Crab",
 		"Thorn Beetle", "Vine Snapper", "Dusk Moth"
@@ -713,6 +719,8 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 		level = levels.get(0);
 		Background bg = level.getBackground();
+		enemy = null;
+		fadeOutTimer = 0;
 		placePlayer(bg.getStartX(), bg.getStartY());
 
 		worldRunes.clear();
@@ -730,9 +738,6 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		manaTimer = 0;
 		upHeld = false;
 
-		//enemyType = 0;
-		//makeEnemy();
-
 		leftHeld = false;
 		rightHeld = false;
 		jumpHeld = false;
@@ -744,31 +749,102 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		playerX = feetX - hitWidth / 2.0;
 		playerY = feetY - hitHeight;
 		velocityY = 0;
+		currentRoom = level.getBackground().findRoom(feetX, feetY - hitHeight / 2.0);
+		fadeTimer = fadeTime;
+		titleTimer = titleTime;
 		moveCamera();
+		spawnEnemy();
 	}
 
 	private void leaveLevel(String side) {
-		BiomeExit exit = level.getBackground().findExit(side);
-		if (exit == null) {
-			return;
+		exitTaken = level.getBackground().findExit(side);
+		if (exitTaken != null) {
+			fadeOutTimer = fadeTime;
 		}
+	}
 
+	private void changeLevel() {
 		String oldName = level.getBackground().getName();
 		for (int i = 0; i < levels.size(); i++) {
-			if (levels.get(i).getBackground().getName().equals(exit.getTarget())) {
+			if (levels.get(i).getBackground().getName().equals(exitTaken.getTarget())) {
 				level = levels.get(i);
 			}
 		}
+		worldRunes.clear();
+		enemy = null;
 		BiomeExit arrival = level.getBackground().findExitTo(oldName);
 		placePlayer(arrival.getSpawnX(), arrival.getSpawnY());
-		worldRunes.clear();
+	}
+
+	private boolean canStandOn(int row, int col) {
+		return getTile(row, col) != null && getTile(row - 1, col) == null && getTile(row - 2, col) == null && getTile(row - 3, col) == null;
+	}
+
+	private void spawnEnemy() {
+		if (enemy != null || currentRoom == null || level.getEnemies().isEmpty()) {
+			return;
+		}
+
+		double centerX = playerX + hitWidth / 2.0;
+		double feetY = playerY + hitHeight;
+		int firstCol = currentRoom.getX() / 16;
+		int lastCol = (currentRoom.getX() + currentRoom.getWidth()) / 16 - 2;
+		int firstRow = currentRoom.getY() / 16 + 3;
+		int lastRow = (currentRoom.getY() + currentRoom.getHeight()) / 16 - 1;
+
+		int bestRow = -1;
+		int bestCol = -1;
+		double bestDiff = 0;
+		for (int row = firstRow; row <= lastRow; row++) {
+			for (int col = firstCol; col <= lastCol; col++) {
+				double x = (col + 1) * 16;
+				double diff = Math.abs(row * 16 - feetY);
+				if (canStandOn(row, col) && canStandOn(row, col + 1) && Math.abs(x - centerX) > 160) {
+					if (bestRow == -1 || diff < bestDiff) {
+						bestRow = row;
+						bestCol = col;
+						bestDiff = diff;
+					}
+				}
+			}
+		}
+		if (bestRow == -1) {
+			return;
+		}
+
+		enemy = level.getEnemies().peek();
+		enemy.revive();
+		enemy.setPosition((bestCol + 1) * 16, bestRow * 16);
+		for (int i = 0; i < enemyNames.length; i++) {
+			if (enemyNames[i].equals(enemy.getName())) {
+				enemyType = i;
+			}
+		}
+		enemyStep = 0;
+		enemyStepTimer = 0;
+		enemyAttackTimer = 0;
+		enemyCooldown = enemyCooldownTime;
 	}
 
 	private void updateExploring() {
+		if (fadeOutTimer > 0) {
+			fadeOutTimer--;
+			if (fadeOutTimer == 0) {
+				changeLevel();
+			}
+			return;
+		}
+		if (fadeTimer > 0) {
+			fadeTimer--;
+		}
+		if (titleTimer > 0) {
+			titleTimer--;
+		}
+
 		circle.update();
 		updateEffects();
 
-		//updateEnemy();
+		updateEnemy();
 
 		manaTimer++;
 		if (manaTimer >= 40) {
@@ -856,6 +932,13 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 			leaveLevel("top");
 		} else if (centerY > bg.getHeightInPixels()) {
 			leaveLevel("bottom");
+		}
+
+		Room room = bg.findRoom(centerX, centerY);
+		if (room != null && room != currentRoom) {
+			currentRoom = room;
+			fadeTimer = fadeTime;
+			spawnEnemy();
 		}
 
 		moveCamera();
@@ -950,61 +1033,32 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		}
 
 		Background bg = level.getBackground();
-		if (cameraX > bg.getWidthInPixels() - viewWidth) {
-			cameraX = bg.getWidthInPixels() - viewWidth;
+		int left = 0;
+		int top = 0;
+		int right = bg.getWidthInPixels();
+		int bottom = bg.getHeightInPixels();
+		if (currentRoom != null) {
+			left = currentRoom.getX();
+			top = currentRoom.getY();
+			right = left + currentRoom.getWidth();
+			bottom = top + currentRoom.getHeight();
 		}
-		if (cameraX < 0) {
-			cameraX = 0;
-		}
-		if (cameraY > bg.getHeightInPixels() - viewHeight) {
-			cameraY = bg.getHeightInPixels() - viewHeight;
-		}
-		if (cameraY < 0) {
-			cameraY = 0;
-		}
-	}
 
-	private void makeEnemy() {
-		if (enemyType == 0) {
-			enemy = new BogLeech();
-		} else if (enemyType == 1) {
-			enemy = new SwampLurker();
-		} else if (enemyType == 2) {
-			enemy = new MireWraith();
-		} else if (enemyType == 3) {
-			enemy = new CinderGnat();
-		} else if (enemyType == 4) {
-			enemy = new MagmaToad();
-		} else if (enemyType == 5) {
-			enemy = new CharredStalker();
-		} else if (enemyType == 6) {
-			enemy = new GlowcapCrawler();
-		} else if (enemyType == 7) {
-			enemy = new DrownedAngler();
-		} else if (enemyType == 8) {
-			enemy = new BonewaterCrab();
-		} else if (enemyType == 9) {
-			enemy = new ThornBeetle();
-		} else if (enemyType == 10) {
-			enemy = new VineSnapper();
-		} else if (enemyType == 11) {
-			enemy = new DuskMoth();
-		} else {
-			enemy = new Enemy(20, 5);
+		if (right - left <= viewWidth) {
+			cameraX = left + (right - left - viewWidth) / 2;
+		} else if (cameraX < left) {
+			cameraX = left;
+		} else if (cameraX > right - viewWidth) {
+			cameraX = right - viewWidth;
 		}
-		enemy.setPosition((int) (playerX + 100), (int) (playerY + hitHeight));
-		enemyStep = 0;
-		enemyStepTimer = 0;
-		enemyAttackTimer = 0;
-		enemyCooldown = enemyCooldownTime;
-	}
 
-	private void nextEnemy() {
-		enemyType = enemyType + 1;
-		if (enemyType >= enemyCount) {
-			enemyType = 0;
+		if (bottom - top <= viewHeight) {
+			cameraY = top + (bottom - top - viewHeight) / 2;
+		} else if (cameraY < top) {
+			cameraY = top;
+		} else if (cameraY > bottom - viewHeight) {
+			cameraY = bottom - viewHeight;
 		}
-		makeEnemy();
 	}
 
 	private void killEnemy() {
@@ -1044,8 +1098,9 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		} else {
 			enemyAttackTimer = 0;
 			enemy.addDeadTime();
-			if (enemy.getDeadTime() >= enemyRespawnTime) {
-				enemy.revive();
+			if (enemy.getDeadTime() >= enemyFadeTime) {
+				level.getEnemies().poll();
+				enemy = null;
 			}
 		}
 	}
@@ -1372,8 +1427,8 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		}
 
 		int spriteSize = (int) Math.round(characterFrameSize * zoom / imageScale);
-		int screenX = (int) Math.round(enemy.getX() * zoom);
-		int feetY = (int) Math.round(enemy.getY() * zoom);
+		int screenX = (int) Math.round((enemy.getX() - cameraX) * zoom);
+		int feetY = (int) Math.round((enemy.getY() - cameraY) * zoom);
 
 		int column = enemyLeftColumn + enemyStep;
 		if (playerX + hitWidth / 2.0 > enemy.getX()) {
@@ -1531,7 +1586,7 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		level.getBackground().draw(g2d, cameraX, cameraY, zoom, w, h);
 
 		drawWorldRunes(g2d, zoom);
-		//drawEnemy(g2d, zoom);
+		drawEnemy(g2d, zoom);
 
 		int dir = facing;
 		if (!onGround) {
@@ -1561,6 +1616,52 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 
 		level.getBackground().drawEffects(g2d, cameraX, cameraY, zoom, w, h, playerScreenX, feetScreenY - spriteSize / 3);
 		drawEffects(g2d, zoom);
+
+		if (currentRoom != null) {
+			int roomLeft = (int) Math.round((currentRoom.getX() - cameraX) * zoom);
+			int roomTop = (int) Math.round((currentRoom.getY() - cameraY) * zoom);
+			int roomRight = (int) Math.round((currentRoom.getX() + currentRoom.getWidth() - cameraX) * zoom);
+			int roomBottom = (int) Math.round((currentRoom.getY() + currentRoom.getHeight() - cameraY) * zoom);
+			g2d.setColor(Color.BLACK);
+			if (roomLeft > 0) {
+				g2d.fillRect(0, 0, roomLeft, h);
+			}
+			if (roomRight < w) {
+				g2d.fillRect(roomRight, 0, w - roomRight, h);
+			}
+			if (roomTop > 0) {
+				g2d.fillRect(0, 0, w, roomTop);
+			}
+			if (roomBottom < h) {
+				g2d.fillRect(0, roomBottom, w, h - roomBottom);
+			}
+		}
+
+		if (fadeOutTimer > 0) {
+			g2d.setColor(new Color(0, 0, 0, (fadeTime - fadeOutTimer) * 255 / fadeTime));
+			g2d.fillRect(0, 0, w, h);
+		} else if (fadeTimer > 0) {
+			g2d.setColor(new Color(0, 0, 0, fadeTimer * 255 / fadeTime));
+			g2d.fillRect(0, 0, w, h);
+		}
+
+		if (titleTimer > 0) {
+			int alpha = 255;
+			if (titleTimer > titleTime - 100) {
+				alpha = (titleTime - titleTimer) * 255 / 100;
+			}
+			if (titleTimer < 150) {
+				alpha = titleTimer * 255 / 150;
+			}
+			String name = level.getBackground().getDisplayName();
+			g2d.setFont(new Font("Serif", Font.BOLD, h / 14));
+			g2d.setColor(new Color(0, 0, 0, alpha / 2));
+			drawCentered(g2d, name, w / 2 + 3, h / 4 + 3);
+			g2d.setColor(new Color(245, 238, 215, alpha));
+			drawCentered(g2d, name, w / 2, h / 4);
+			g2d.fillRect(w / 2 - w / 8, h / 4 + h / 40, w / 4, 3);
+		}
+
 		drawHud(g2d);
 		if (circle.isOpen()) {
 			drawRuneCircle(g2d, playerScreenX, feetScreenY - spriteSize / 2, spriteSize);
@@ -1639,9 +1740,6 @@ public class Game extends JPanel  implements Runnable, KeyListener, MouseWheelLi
 		// TODO Auto-generated method stub
 		//throw new UnsupportedOperationException("Unimplemented method 'mousePressed'");
 		//System.out.println("mouse pressed");
-		//if (currentScreen == exploreScreen) {
-		//	nextEnemy();
-		//}
 	  }
 
 	  @Override
